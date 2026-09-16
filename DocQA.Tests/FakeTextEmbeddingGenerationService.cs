@@ -11,7 +11,7 @@ namespace DocQA.Tests;
 /// </summary>
 public class FakeTextEmbeddingGenerationService : ITextEmbeddingGenerationService
 {
-    private const int Dimensions = 1536;
+    private const int Dimensions = 2048; // matches DocumentChunk.Embedding's [VectorStoreVector(2048)]
 
     public IReadOnlyDictionary<string, object?> Attributes { get; } = new Dictionary<string, object?>();
 

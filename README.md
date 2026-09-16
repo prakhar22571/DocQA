@@ -7,7 +7,7 @@ decides for itself whether it needs to search the knowledge base before answerin
 ## What it does
 
 - **Ingestion**: text is split into ~500-character chunks on paragraph/sentence boundaries, embedded
-  via OpenAI, and upserted into an `InMemoryVectorStore` collection (`document-chunks`).
+  via OpenRouter, and upserted into an `InMemoryVectorStore` collection (`document-chunks`).
 - **Retrieval-augmented Q&A**: questions are answered by a chat model that has a `SearchKnowledgeBase`
   function available to it. The model calls that function only when it decides it needs context —
   there's no hardcoded "always retrieve" step.
@@ -16,6 +16,12 @@ decides for itself whether it needs to search the knowledge base before answerin
   were actually called.
 
 Data is in-memory only — nothing persists across restarts.
+
+> **Embedding dimension: 2048.** `DocumentChunk.Embedding` is sized for
+> `nvidia/nemotron-3-embed-1b:free`'s native output (previously 1536, for OpenAI's
+> `text-embedding-3-small`). This is a breaking schema change for the in-memory store — old
+> 1536-dim vectors are incompatible and aren't migrated. Since storage is in-memory only, this just
+> means: restart the app and re-ingest your documents after upgrading.
 
 ## Running it
 
@@ -27,30 +33,35 @@ dotnet run
 
 ### Required configuration
 
-The app reads OpenAI settings from configuration (`appsettings.json`, environment variables, or user
-secrets — standard ASP.NET Core config layering). At minimum you need an API key:
+The app talks to [OpenRouter](https://openrouter.ai) (an OpenAI-compatible API at
+`https://openrouter.ai/api/v1`) rather than OpenAI directly, using free-tier models only:
 
-| Key                      | Purpose                              | Default                 |
-|---------------------------|---------------------------------------|--------------------------|
-| `OpenAI:ApiKey`            | Your OpenAI API key (**required**)    | *(none — must be set)*  |
-| `OpenAI:ChatModel`         | Chat completion model                 | `gpt-4o-mini`            |
-| `OpenAI:EmbeddingModel`    | Embedding model                       | `text-embedding-3-small` |
+| Key                          | Purpose                | Default                              |
+|-------------------------------|-------------------------|----------------------------------------|
+| `OpenRouter:ApiKey`            | Your OpenRouter API key (**required**) | *(none — must be set)*      |
+| `OpenRouter:ChatModel`          | Chat completion model  | `openai/gpt-oss-120b:free`             |
+| `OpenRouter:EmbeddingModel`     | Embedding model         | `nvidia/nemotron-3-embed-1b:free`      |
 
-`appsettings.Development.json` is gitignored, so it's a safe place to drop a real key for local
-development:
-
-```json
-{
-  "OpenAI": { "ApiKey": "sk-..." }
-}
-```
-
-Or via environment variable (double underscore maps to the nested config key):
+**The API key must be set via the `OPENROUTER_API_KEY` environment variable** — it's read into
+configuration explicitly at startup (not via the standard `OpenRouter__ApiKey` double-underscore
+convention) and is never hardcoded anywhere in the repo:
 
 ```
-$env:OpenAI__ApiKey = "sk-..."      # PowerShell
-export OpenAI__ApiKey="sk-..."      # bash
+$env:OPENROUTER_API_KEY = "sk-or-..."      # PowerShell
+export OPENROUTER_API_KEY="sk-or-..."      # bash
 ```
+
+`ChatModel` and `EmbeddingModel` can still be overridden via `appsettings.json`,
+`appsettings.Development.json` (gitignored), or ordinary configuration if you want to point at
+different OpenRouter models.
+
+#### Known constraint: free-tier rate limits
+
+The default models are OpenRouter's free tier, which is rate-limited to **20 requests/minute and 50
+requests/day** per key (shared across chat and embedding calls). A hosted demo can hit this quickly —
+each `/documents/ingest` call costs one embedding request per chunk, and each `/documents/query`
+call costs at least one chat completion request plus one embedding request if the model searches.
+If you see `429` errors from OpenRouter, this is why.
 
 ## Endpoints
 
@@ -86,7 +97,8 @@ empty if it answered without searching. Returns `400` if `question` is empty or 
 
 The chat completion call is configured with `FunctionChoiceBehavior.Auto()` and given the Kernel
 (which has `SearchKnowledgeBase` registered as a plugin function). This means the model itself
-decides, per question, whether it needs to call `SearchKnowledgeBase` before it can answer — the
+(currently `openai/gpt-oss-120b:free` via OpenRouter) decides, per question, whether it needs to
+call `SearchKnowledgeBase` before it can answer — the
 API code never forces a retrieve-then-generate pipeline. A system prompt instructs the model to
 answer only from retrieved context and to say "I don't have that information" when the knowledge
 base has nothing relevant, so a question the model can't ground in retrieved chunks doesn't get a
@@ -106,6 +118,10 @@ dotnet test
   real `InMemoryVectorStore` and confirms `SearchKnowledgeBase` returns the relevant one for a
   matching query (and not the irrelevant one).
 
-Neither test calls the real OpenAI API — both use a deterministic in-process fake
-(`FakeTextEmbeddingGenerationService`) in place of the embedding service, so they run offline and
-don't require an API key.
+Neither test calls the real OpenRouter API — both use a deterministic in-process fake
+(`FakeTextEmbeddingGenerationService`, producing 2048-dim vectors to match the current schema) in
+place of the embedding service, so they run offline and don't require an API key. Note that the
+integration test exercises `SearchKnowledgeBase` and the vector store directly, not the chat
+completion / tool-calling path — confirming that `openai/gpt-oss-120b:free` actually chooses to
+call `SearchKnowledgeBase` requires a live call through `/documents/query` with a real
+`OPENROUTER_API_KEY`.

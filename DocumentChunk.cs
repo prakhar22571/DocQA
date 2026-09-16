@@ -13,6 +13,6 @@ public record DocumentChunk
     [VectorStoreData]
     public required string Content { get; set; }
 
-    [VectorStoreVector(1536)]
+    [VectorStoreVector(2048)]
     public required ReadOnlyMemory<float> Embedding { get; set; }
 }

@@ -11,18 +11,35 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+// OPENROUTER_API_KEY doesn't follow ASP.NET Core's double-underscore env var convention
+// (OpenRouter__ApiKey), so map it into configuration explicitly instead of hardcoding it anywhere.
+var openRouterApiKeyFromEnv = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+if (!string.IsNullOrEmpty(openRouterApiKeyFromEnv))
+{
+    builder.Configuration.AddInMemoryCollection([
+        new KeyValuePair<string, string?>("OpenRouter:ApiKey", openRouterApiKeyFromEnv)
+    ]);
+}
+
+var openRouterEndpoint = new Uri("https://openrouter.ai/api/v1");
+
 builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
-    var apiKey = config["OpenAI:ApiKey"]
-        ?? throw new InvalidOperationException("OpenAI:ApiKey is not configured.");
-    var chatModel = config["OpenAI:ChatModel"] ?? "gpt-4o-mini";
-    var embeddingModel = config["OpenAI:EmbeddingModel"] ?? "text-embedding-3-small";
+    var apiKey = config["OpenRouter:ApiKey"]
+        ?? throw new InvalidOperationException("OpenRouter:ApiKey is not configured. Set the OPENROUTER_API_KEY environment variable.");
+    var chatModel = config["OpenRouter:ChatModel"] ?? "openai/gpt-oss-120b:free";
+    var embeddingModel = config["OpenRouter:EmbeddingModel"] ?? "nvidia/nemotron-3-embed-1b:free";
+
+    var httpClient = new HttpClient { BaseAddress = openRouterEndpoint };
+    httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost");
+    httpClient.DefaultRequestHeaders.Add("X-Title", "DocQA");
 
     var kernelBuilder = Kernel.CreateBuilder();
-    kernelBuilder.AddOpenAIChatCompletion(chatModel, apiKey);
+    kernelBuilder.AddOpenAIChatCompletion(chatModel, openRouterEndpoint, apiKey, httpClient: httpClient);
 #pragma warning disable CS0618 // AddOpenAITextEmbeddingGeneration is obsolete in favor of AddOpenAIEmbeddingGenerator, but ITextEmbeddingGenerationService is still what SK's text-search/memory APIs consume.
-    kernelBuilder.AddOpenAITextEmbeddingGeneration(embeddingModel, apiKey);
+    // No Uri-endpoint overload exists for embeddings in this SK version; httpClient.BaseAddress carries the endpoint instead.
+    kernelBuilder.AddOpenAITextEmbeddingGeneration(embeddingModel, apiKey, httpClient: httpClient);
 #pragma warning restore CS0618
 
     var kernel = kernelBuilder.Build();
