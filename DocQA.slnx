@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="DocQA.csproj" />
+  <Project Path="DocQA.Tests/DocQA.Tests.csproj" />
+</Solution>

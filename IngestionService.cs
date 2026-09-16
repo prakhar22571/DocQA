@@ -33,7 +33,7 @@ public class IngestionService(Kernel kernel, VectorStoreCollection<string, Docum
         }
     }
 
-    private static List<string> ChunkText(string text, int targetSize = TargetChunkSize)
+    internal static List<string> ChunkText(string text, int targetSize = TargetChunkSize)
     {
         var paragraphs = Regex.Split(text.Trim(), @"\r?\n\s*\r?\n")
             .Select(p => p.Trim())
