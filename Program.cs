@@ -2,6 +2,7 @@ using DocQA;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Connectors.InMemory;
+using Microsoft.SemanticKernel.Connectors.OpenAI;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,13 +24,25 @@ builder.Services.AddSingleton(sp =>
     kernelBuilder.AddOpenAITextEmbeddingGeneration(embeddingModel, apiKey);
 #pragma warning restore CS0618
 
-    return kernelBuilder.Build();
+    var kernel = kernelBuilder.Build();
+
+    var collection = sp.GetRequiredService<VectorStoreCollection<string, DocumentChunk>>();
+    kernel.Plugins.AddFromObject(new KnowledgeBasePlugin(kernel, collection), "KnowledgeBase");
+
+    return kernel;
 });
 
 builder.Services.AddSingleton<InMemoryVectorStore>();
 builder.Services.AddSingleton<VectorStoreCollection<string, DocumentChunk>>(sp =>
     sp.GetRequiredService<InMemoryVectorStore>().GetCollection<string, DocumentChunk>("document-chunks"));
 builder.Services.AddSingleton<IngestionService>();
+
+// Default execution settings so chat completion callers get automatic function calling
+// (the model decides whether to invoke SearchKnowledgeBase) without repeating this per call site.
+builder.Services.AddSingleton(new OpenAIPromptExecutionSettings
+{
+    FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
+});
 
 var app = builder.Build();
 
