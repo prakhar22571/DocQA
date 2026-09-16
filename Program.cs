@@ -1,4 +1,7 @@
+using DocQA;
+using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.Connectors.InMemory;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +26,10 @@ builder.Services.AddSingleton(sp =>
     return kernelBuilder.Build();
 });
 
+builder.Services.AddSingleton<InMemoryVectorStore>();
+builder.Services.AddSingleton<VectorStoreCollection<string, DocumentChunk>>(sp =>
+    sp.GetRequiredService<InMemoryVectorStore>().GetCollection<string, DocumentChunk>("document-chunks"));
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -32,5 +39,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+await app.Services.GetRequiredService<VectorStoreCollection<string, DocumentChunk>>()
+    .EnsureCollectionExistsAsync();
 
 app.Run();
