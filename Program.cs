@@ -80,6 +80,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 app.MapPost("/documents/ingest", async (IngestRequest request, HttpContext context) =>
 {

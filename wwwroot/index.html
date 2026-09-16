@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DocQA</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --border: #e0e0e5;
+    --text: #1a1a1e;
+    --muted: #6b6b74;
+    --accent: #4f46e5;
+    --accent-text: #ffffff;
+    --bubble-user: #4f46e5;
+    --bubble-user-text: #ffffff;
+    --bubble-assistant: #f0f0f4;
+    --bubble-assistant-text: #1a1a1e;
+    --ok: #16794f;
+    --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --panel: #212126;
+      --border: #34343b;
+      --text: #ececef;
+      --muted: #9a9aa2;
+      --bubble-assistant: #2c2c33;
+      --bubble-assistant-text: #ececef;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 24px 16px 48px;
+  }
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .panel h2 {
+    font-size: 1rem;
+    margin: 0 0 12px;
+  }
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  input[type="text"], textarea {
+    width: 100%;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    resize: vertical;
+  }
+  textarea { min-height: 100px; }
+  .field { margin-bottom: 10px; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    background: var(--accent);
+    color: var(--accent-text);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .status {
+    margin-top: 8px;
+    font-size: 0.85rem;
+    min-height: 1.2em;
+  }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); white-space: pre-wrap; }
+
+  #chat {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .msg { display: flex; flex-direction: column; max-width: 85%; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.assistant { align-self: flex-start; align-items: flex-start; }
+  .bubble {
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 0.92rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+  }
+  .msg.user .bubble { background: var(--bubble-user); color: var(--bubble-user-text); border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble { background: var(--bubble-assistant); color: var(--bubble-assistant-text); border-bottom-left-radius: 4px; }
+  .meta {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+  .askrow { display: flex; gap: 8px; margin-top: 12px; }
+  .askrow input { flex: 1; }
+  .empty { color: var(--muted); font-size: 0.88rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>DocQA</h1>
+    <p class="subtitle">Ingest a document, then ask questions about it. The model decides for itself whether it needs to search.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Ingest a document</h2>
+    <div class="field">
+      <label for="sourceDocument">Source document name</label>
+      <input type="text" id="sourceDocument" placeholder="e.g. refund-policy.txt" value="refund-policy.txt">
+    </div>
+    <div class="field">
+      <label for="docText">Text</label>
+      <textarea id="docText" placeholder="Paste the document text here..."></textarea>
+    </div>
+    <button id="ingestBtn">Ingest</button>
+    <div id="ingestStatus" class="status"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Ask a question</h2>
+    <div id="chat">
+      <div class="empty">No messages yet.</div>
+    </div>
+    <div class="askrow">
+      <input type="text" id="question" placeholder="Ask something about what you ingested...">
+      <button id="askBtn">Ask</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const chatEl = document.getElementById('chat');
+const ingestBtn = document.getElementById('ingestBtn');
+const askBtn = document.getElementById('askBtn');
+const ingestStatus = document.getElementById('ingestStatus');
+const questionInput = document.getElementById('question');
+
+function setStatus(el, text, kind) {
+  el.textContent = text;
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function parseErrorBody(resp) {
+  const text = await resp.text();
+  try {
+    const json = JSON.parse(text);
+    return json.title || json.detail || json.message || text;
+  } catch {
+    return text || resp.statusText;
+  }
+}
+
+ingestBtn.addEventListener('click', async () => {
+  const sourceDocument = document.getElementById('sourceDocument').value.trim();
+  const text = document.getElementById('docText').value;
+
+  ingestBtn.disabled = true;
+  setStatus(ingestStatus, 'Ingesting (embedding + storing chunks)...', '');
+
+  try {
+    const resp = await fetch('/documents/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceDocument, text })
+    });
+
+    if (resp.ok) {
+      setStatus(ingestStatus, 'Ingested successfully.', 'ok');
+    } else {
+      setStatus(ingestStatus, `Error ${resp.status}: ${await parseErrorBody(resp)}`, 'err');
+    }
+  } catch (err) {
+    setStatus(ingestStatus, `Request failed: ${err.message}`, 'err');
+  } finally {
+    ingestBtn.disabled = false;
+  }
+});
+
+function addMessage(role, text) {
+  const empty = chatEl.querySelector('.empty');
+  if (empty) empty.remove();
+
+  const msg = document.createElement('div');
+  msg.className = 'msg ' + role;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  msg.appendChild(bubble);
+
+  chatEl.appendChild(msg);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return msg;
+}
+
+function addMeta(msg, text) {
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = text;
+  msg.appendChild(meta);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function ask() {
+  const question = questionInput.value.trim();
+  if (!question) return;
+
+  addMessage('user', question);
+  questionInput.value = '';
+  askBtn.disabled = true;
+
+  const pending = addMessage('assistant', 'Thinking...');
+
+  try {
+    const resp = await fetch('/documents/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      pending.querySelector('.bubble').textContent = data.answer;
+      const calls = data.functionCallsMade || [];
+      addMeta(pending, calls.length ? `searched: ${calls.join(', ')}` : 'answered without searching');
+    } else {
+      pending.querySelector('.bubble').textContent = `Error ${resp.status}: ${await parseErrorBody(resp)}`;
+    }
+  } catch (err) {
+    pending.querySelector('.bubble').textContent = `Request failed: ${err.message}`;
+  } finally {
+    askBtn.disabled = false;
+  }
+}
+
+askBtn.addEventListener('click', ask);
+questionInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') ask();
+});
+</script>
+</body>
+</html>
