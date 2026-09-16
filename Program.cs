@@ -28,18 +28,25 @@ builder.Services.AddSingleton(sp =>
     var config = sp.GetRequiredService<IConfiguration>();
     var apiKey = config["OpenRouter:ApiKey"]
         ?? throw new InvalidOperationException("OpenRouter:ApiKey is not configured. Set the OPENROUTER_API_KEY environment variable.");
-    var chatModel = config["OpenRouter:ChatModel"] ?? "openai/gpt-oss-120b:free";
+    var chatModel = config["OpenRouter:ChatModel"] ?? "nvidia/nemotron-3-super-120b-a12b:free";
     var embeddingModel = config["OpenRouter:EmbeddingModel"] ?? "nvidia/nemotron-3-embed-1b:free";
 
-    var httpClient = new HttpClient { BaseAddress = openRouterEndpoint };
-    httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost");
-    httpClient.DefaultRequestHeaders.Add("X-Title", "DocQA");
+    // Chat completion takes the endpoint as an explicit parameter, so its HttpClient must NOT also
+    // set BaseAddress -- doing both makes the SDK apply the OpenRouter path twice (a 404).
+    var chatHttpClient = new HttpClient();
+    chatHttpClient.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost");
+    chatHttpClient.DefaultRequestHeaders.Add("X-Title", "DocQA");
+
+    // Embeddings have no endpoint parameter in this SK version, so BaseAddress is the only way
+    // to point this client at OpenRouter.
+    var embeddingHttpClient = new HttpClient { BaseAddress = openRouterEndpoint };
+    embeddingHttpClient.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost");
+    embeddingHttpClient.DefaultRequestHeaders.Add("X-Title", "DocQA");
 
     var kernelBuilder = Kernel.CreateBuilder();
-    kernelBuilder.AddOpenAIChatCompletion(chatModel, openRouterEndpoint, apiKey, httpClient: httpClient);
+    kernelBuilder.AddOpenAIChatCompletion(chatModel, openRouterEndpoint, apiKey, httpClient: chatHttpClient);
 #pragma warning disable CS0618 // AddOpenAITextEmbeddingGeneration is obsolete in favor of AddOpenAIEmbeddingGenerator, but ITextEmbeddingGenerationService is still what SK's text-search/memory APIs consume.
-    // No Uri-endpoint overload exists for embeddings in this SK version; httpClient.BaseAddress carries the endpoint instead.
-    kernelBuilder.AddOpenAITextEmbeddingGeneration(embeddingModel, apiKey, httpClient: httpClient);
+    kernelBuilder.AddOpenAITextEmbeddingGeneration(embeddingModel, apiKey, httpClient: embeddingHttpClient);
 #pragma warning restore CS0618
 
     var kernel = kernelBuilder.Build();
@@ -106,7 +113,30 @@ app.MapPost("/documents/query", async (QueryRequest request, HttpContext context
         """);
     history.AddUserMessage(request.Question);
 
-    var response = await chatCompletionService.GetChatMessageContentAsync(history, executionSettings, kernel);
+    // OpenRouter's free-tier providers occasionally return HTTP 200 with an error-shaped body
+    // ("Upstream error ... Service temporarily overloaded") instead of a proper error status.
+    // The OpenAI SDK doesn't handle that shape gracefully -- it throws ArgumentOutOfRangeException
+    // deep in response metadata parsing rather than a clear error. Since the underlying condition
+    // is transient, retry a couple of times before giving up.
+    const int maxAttempts = 3;
+    ChatMessageContent? response = null;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            response = await chatCompletionService.GetChatMessageContentAsync(history, executionSettings, kernel);
+            break;
+        }
+        catch (ArgumentOutOfRangeException) when (attempt < maxAttempts)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    if (response is null)
+    {
+        return Results.Problem("The upstream model provider is temporarily overloaded. Please try again.", statusCode: 503);
+    }
 
     var functionCallsMade = history
         .SelectMany(message => message.Items.OfType<FunctionCallContent>())
