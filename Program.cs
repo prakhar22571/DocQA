@@ -1,6 +1,7 @@
 using DocQA;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.InMemory;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 
@@ -28,6 +29,8 @@ builder.Services.AddSingleton(sp =>
 
     var collection = sp.GetRequiredService<VectorStoreCollection<string, DocumentChunk>>();
     kernel.Plugins.AddFromObject(new KnowledgeBasePlugin(kernel, collection), "KnowledgeBase");
+
+    kernel.FunctionInvocationFilters.Add(new FunctionInvocationLoggingFilter());
 
     return kernel;
 });
@@ -66,9 +69,41 @@ app.MapPost("/documents/ingest", async (IngestRequest request, HttpContext conte
     return Results.Ok();
 });
 
+app.MapPost("/documents/query", async (QueryRequest request, HttpContext context) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Question))
+    {
+        return Results.BadRequest("Question must not be empty or whitespace.");
+    }
+
+    var kernel = context.RequestServices.GetRequiredService<Kernel>();
+    var executionSettings = context.RequestServices.GetRequiredService<OpenAIPromptExecutionSettings>();
+    var chatCompletionService = kernel.GetRequiredService<IChatCompletionService>();
+
+    var history = new ChatHistory("""
+        You are a knowledge base assistant. Answer the user's question using only information
+        retrieved from the knowledge base via the SearchKnowledgeBase function. Call
+        SearchKnowledgeBase when you need context to answer. If the knowledge base has no
+        relevant information, respond exactly with "I don't have that information." Do not use
+        outside knowledge.
+        """);
+    history.AddUserMessage(request.Question);
+
+    var response = await chatCompletionService.GetChatMessageContentAsync(history, executionSettings, kernel);
+
+    var functionCallsMade = history
+        .SelectMany(message => message.Items.OfType<FunctionCallContent>())
+        .Select(call => call.FunctionName)
+        .ToList();
+
+    return Results.Ok(new QueryResponse(response.Content ?? string.Empty, functionCallsMade));
+});
+
 await app.Services.GetRequiredService<VectorStoreCollection<string, DocumentChunk>>()
     .EnsureCollectionExistsAsync();
 
 app.Run();
 
 record IngestRequest(string SourceDocument, string Text);
+record QueryRequest(string Question);
+record QueryResponse(string Answer, IReadOnlyList<string> FunctionCallsMade);
