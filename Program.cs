@@ -29,6 +29,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<InMemoryVectorStore>();
 builder.Services.AddSingleton<VectorStoreCollection<string, DocumentChunk>>(sp =>
     sp.GetRequiredService<InMemoryVectorStore>().GetCollection<string, DocumentChunk>("document-chunks"));
+builder.Services.AddSingleton<IngestionService>();
 
 var app = builder.Build();
 
@@ -40,7 +41,21 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.MapPost("/documents/ingest", async (IngestRequest request, HttpContext context) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Text))
+    {
+        return Results.BadRequest("Text must not be empty or whitespace.");
+    }
+
+    var ingestionService = context.RequestServices.GetRequiredService<IngestionService>();
+    await ingestionService.IngestAsync(request.SourceDocument, request.Text);
+    return Results.Ok();
+});
+
 await app.Services.GetRequiredService<VectorStoreCollection<string, DocumentChunk>>()
     .EnsureCollectionExistsAsync();
 
 app.Run();
+
+record IngestRequest(string SourceDocument, string Text);
