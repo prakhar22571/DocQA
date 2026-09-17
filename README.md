@@ -6,8 +6,9 @@ decides for itself whether it needs to search the knowledge base before answerin
 
 ## What it does
 
-- **Ingestion**: text is split into ~500-character chunks on paragraph/sentence boundaries, embedded
-  via OpenRouter, and upserted into an `InMemoryVectorStore` collection (`document-chunks`).
+- **Ingestion**: text (pasted directly, or extracted server-side from an uploaded PDF) is split into
+  ~500-character chunks on paragraph/sentence boundaries, embedded via OpenRouter, and upserted into
+  an `InMemoryVectorStore` collection (`document-chunks`).
 - **Retrieval-augmented Q&A**: questions are answered by a chat model that has a `SearchKnowledgeBase`
   function available to it. The model calls that function only when it decides it needs context —
   there's no hardcoded "always retrieve" step.
@@ -30,6 +31,12 @@ Requires the .NET 10 SDK.
 ```
 dotnet run
 ```
+
+Open `http://localhost:5018` (the port from `Properties/launchSettings.json`; pass `--urls` to
+`dotnet run` to override it) in a browser for a minimal frontend
+(`wwwroot/index.html`, plain HTML/JS, no build step, no framework): a form to ingest text or upload
+a PDF, and a chat interface to ask questions, showing under each answer which kernel functions the
+model actually called.
 
 ### Required configuration
 
@@ -87,6 +94,19 @@ Chunks, embeds, and stores a document.
 
 Returns `200 OK` on success, `400` if `text` is empty or whitespace-only.
 
+### `POST /documents/ingest/pdf`
+
+Same as above, but for a PDF file. `multipart/form-data` with a single field named `file`.
+
+```
+curl -F "file=@handbook.pdf" http://localhost:5018/documents/ingest/pdf
+```
+
+Text is extracted server-side (via [PdfPig](#note-on-the-pdfpig-dependency)), then chunked, embedded,
+and stored exactly like `/documents/ingest`. The uploaded filename is used as `sourceDocument`.
+Returns `400` if the file is empty, isn't a `.pdf`, can't be parsed, or has no extractable text
+(e.g. a scanned PDF with no text layer — this app does no OCR).
+
 ### `POST /documents/query`
 
 Asks a question against the knowledge base.
@@ -136,3 +156,13 @@ integration test exercises `SearchKnowledgeBase` and the vector store directly, 
 completion / tool-calling path — confirming that the configured chat model actually chooses to
 call `SearchKnowledgeBase` requires a live call through `/documents/query` with a real
 `OPENROUTER_API_KEY`.
+
+### Note on the PdfPig dependency
+
+PDF text extraction uses [`UglyToad.PdfPig`](https://github.com/UglyToad/PdfPig) (MIT-licensed,
+pure .NET, no native dependencies). At the time this was added, the package is pinned to
+`1.7.0-custom-5` rather than a normal `x.y.z` release — the maintainers' manual major-version
+release process has lagged for over a year, so this is an automated nightly-style build they
+publish to NuGet in the meantime (confirmed via the project's own GitHub issue tracker), not an
+unofficial fork or a hijacked package ID. Worth re-checking for a proper stable release next time
+this dependency is touched.

@@ -95,6 +95,39 @@ app.MapPost("/documents/ingest", async (IngestRequest request, HttpContext conte
     return Results.Ok();
 });
 
+app.MapPost("/documents/ingest/pdf", async (IFormFile file, HttpContext context) =>
+{
+    if (file.Length == 0)
+    {
+        return Results.BadRequest("File must not be empty.");
+    }
+
+    if (!string.Equals(Path.GetExtension(file.FileName), ".pdf", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest("Only PDF files are supported.");
+    }
+
+    string text;
+    try
+    {
+        await using var stream = file.OpenReadStream();
+        text = PdfTextExtractor.ExtractText(stream);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest($"Could not read PDF: {ex.Message}");
+    }
+
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return Results.BadRequest("No extractable text found in the PDF.");
+    }
+
+    var ingestionService = context.RequestServices.GetRequiredService<IngestionService>();
+    await ingestionService.IngestAsync(file.FileName, text);
+    return Results.Ok();
+}).DisableAntiforgery();
+
 app.MapPost("/documents/query", async (QueryRequest request, HttpContext context) =>
 {
     if (string.IsNullOrWhiteSpace(request.Question))

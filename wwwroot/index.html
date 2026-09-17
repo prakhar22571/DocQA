@@ -131,6 +131,28 @@
   .askrow { display: flex; gap: 8px; margin-top: 12px; }
   .askrow input { flex: 1; }
   .empty { color: var(--muted); font-size: 0.88rem; }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin: 16px 0 12px;
+  }
+  .divider::before, .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .filerow { display: flex; gap: 8px; align-items: center; }
+  input[type="file"] {
+    flex: 1;
+    font: inherit;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
 </style>
 </head>
 <body>
@@ -152,6 +174,16 @@
     </div>
     <button id="ingestBtn">Ingest</button>
     <div id="ingestStatus" class="status"></div>
+
+    <div class="divider">or</div>
+
+    <div class="field">
+      <label for="pdfFile">Upload a PDF</label>
+      <div class="filerow">
+        <input type="file" id="pdfFile" accept="application/pdf,.pdf">
+        <button id="pdfBtn">Upload</button>
+      </div>
+    </div>
   </div>
 
   <div class="panel">
@@ -211,6 +243,41 @@ ingestBtn.addEventListener('click', async () => {
     setStatus(ingestStatus, `Request failed: ${err.message}`, 'err');
   } finally {
     ingestBtn.disabled = false;
+  }
+});
+
+const pdfBtn = document.getElementById('pdfBtn');
+const pdfFileInput = document.getElementById('pdfFile');
+
+pdfBtn.addEventListener('click', async () => {
+  const file = pdfFileInput.files[0];
+  if (!file) {
+    setStatus(ingestStatus, 'Choose a PDF file first.', 'err');
+    return;
+  }
+
+  pdfBtn.disabled = true;
+  setStatus(ingestStatus, `Uploading "${file.name}" and extracting text...`, '');
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const resp = await fetch('/documents/ingest/pdf', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (resp.ok) {
+      setStatus(ingestStatus, `Ingested "${file.name}" successfully.`, 'ok');
+      pdfFileInput.value = '';
+    } else {
+      setStatus(ingestStatus, `Error ${resp.status}: ${await parseErrorBody(resp)}`, 'err');
+    }
+  } catch (err) {
+    setStatus(ingestStatus, `Request failed: ${err.message}`, 'err');
+  } finally {
+    pdfBtn.disabled = false;
   }
 });
 
