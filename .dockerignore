@@ -1,0 +1,8 @@
+bin/
+obj/
+DocQA.Tests/
+.git/
+.vs/
+.vscode/
+.idea/
+appsettings.Development.json
