@@ -152,8 +152,10 @@ app.MapPost("/documents/query", async (QueryRequest request, HttpContext context
     // ("Upstream error ... Service temporarily overloaded") instead of a proper error status.
     // The OpenAI SDK doesn't handle that shape gracefully -- it throws ArgumentOutOfRangeException
     // deep in response metadata parsing rather than a clear error. Since the underlying condition
-    // is transient, retry a couple of times before giving up.
-    const int maxAttempts = 3;
+    // is transient, retry with backoff before giving up. The final attempt's exception must still be
+    // caught here (not left to propagate) so it falls through to the clean 503 below instead of a
+    // raw 500.
+    const int maxAttempts = 4;
     ChatMessageContent? response = null;
     for (var attempt = 1; attempt <= maxAttempts; attempt++)
     {
@@ -162,9 +164,14 @@ app.MapPost("/documents/query", async (QueryRequest request, HttpContext context
             response = await chatCompletionService.GetChatMessageContentAsync(history, executionSettings, kernel);
             break;
         }
-        catch (ArgumentOutOfRangeException) when (attempt < maxAttempts)
+        catch (ArgumentOutOfRangeException)
         {
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            if (attempt == maxAttempts)
+            {
+                break;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
         }
     }
 
